@@ -2,6 +2,7 @@ use anyhow::Result;
 use clap::Parser;
 use console::Style;
 use dotenv::dotenv;
+use std::collections::HashMap;
 use std::env;
 use std::time::Duration;
 
@@ -13,7 +14,7 @@ use benchmark::Benchmark;
 
 #[derive(Parser)]
 #[command(name = "shredlink")]
-#[command(about = "A high-performance benchmarking tool for comparing Geyser and Shredlink transaction streaming latency on Solana")]
+#[command(about = "A high-performance benchmarking tool for comparing multiple Geyser sources and Shredlink transaction streaming latency on Solana")]
 #[command(version = "1.0")]
 struct Cli {
     /// Benchmark duration in seconds
@@ -35,17 +36,27 @@ async fn main() -> Result<()> {
     let green = Style::new().green();
     let red = Style::new().red();
     
-    println!("{}", cyan.apply_to("🚀 ShredLink - Solana Transaction Streaming Benchmark"));
-    println!("{}", cyan.apply_to("=".repeat(60)));
+    println!("{}", cyan.apply_to("🚀 ShredLink - Multi-Geyser Solana Transaction Streaming Benchmark"));
+    println!("{}", cyan.apply_to("=".repeat(70)));
     
-    // Get configuration from environment
-    let geyser_host = env::var("GEYSER_HOST_URL").map_err(|_| {
-        anyhow::anyhow!("{}", red.apply_to("❌ GEYSER_HOST_URL environment variable not set"))
-    })?;
+    // Get Geyser configuration from environment
+    // Support multiple Geyser sources via numbered environment variables
+    let mut geyser_urls = HashMap::new();
     
-    // let geyser_api_key = env::var("GEYSER_API_KEY").map_err(|_| {
-    //     anyhow::anyhow!("{}", red.apply_to("❌ GEYSER_API_KEY environment variable not set"))
-    // })?;
+    // Check for named Geyser sources (e.g., GEYSER_TRITON_URL, GEYSER_HELIUS_URL, etc.)
+    for (key, value) in env::vars() {
+        if key.starts_with("GEYSER_") && key.ends_with("_URL") && key != "GEYSER_HOST_URL" {
+            // Extract the name between GEYSER_ and _URL
+            if let Some(name_part) = key.strip_prefix("GEYSER_").and_then(|s| s.strip_suffix("_URL")) {
+                let geyser_name = format!("Geyser-{}", name_part.to_lowercase());
+                geyser_urls.insert(geyser_name, value);
+            }
+        }
+    }
+    
+    if geyser_urls.is_empty() {
+        return Err(anyhow::anyhow!("{}", red.apply_to("❌ No Geyser URLs found. Set GEYSER_HOST_URL or GEYSER_<NAME>_URL environment variables")));
+    }
     
     let shredlink_host = env::var("SHREDLINK_HOST_URL").map_err(|_| {
         anyhow::anyhow!("{}", red.apply_to("❌ SHREDLINK_HOST_URL environment variable not set"))
@@ -54,13 +65,16 @@ async fn main() -> Result<()> {
     let benchmark_time = Duration::from_secs(cli.duration);
     
     println!("{}", green.apply_to("📋 Configuration:"));
-    println!("  🔗 Geyser Host: {}", geyser_host);
+    for (name, url) in &geyser_urls {
+        println!("  🔗 {}: {}", name, url);
+    }
     println!("  🔗 Shredlink Host: {}", shredlink_host);
     println!("  ⏱️  Duration: {} seconds", cli.duration);
+    println!("  📊 Total Geyser Sources: {}", geyser_urls.len());
     println!();
     
     // Create and run benchmark
-    let mut benchmark = Benchmark::new(geyser_host.clone(), shredlink_host.clone());
+    let mut benchmark = Benchmark::new(geyser_urls, shredlink_host);
     
     println!("{}", green.apply_to("🏁 Starting benchmark..."));
     benchmark.run(benchmark_time).await?;

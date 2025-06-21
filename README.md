@@ -13,12 +13,17 @@ A Rust tool that benchmarks transaction streaming latency between Geyser and Shr
    ```
 
 3. **Configure environment** (`.env` file):
-   ```
-   GEYSER_HOST_URL=grpc://your-geyser-host:443
+   ```env
+   # Named Geyser Sources (for branded comparisons)
+   GEYSER_TRITON_URL=grpc://triton-geyser:443
+   GEYSER_HELIUS_URL=grpc://helius-geyser:443
+   GEYSER_QUICKNODE_URL=grpc://quicknode-geyser:443
+   
+   # Shredlink (the star of the show!)
    SHREDLINK_HOST_URL=grpc://your-shredlink-host:443
    ```
 
-## Usage
+## 🏃‍♂️ Usage
 
 ```bash
 # Run 60-second benchmark (default)
@@ -30,11 +35,6 @@ cargo run --release -- --duration 120
 
 ## Output
 
-The tool shows:
-- Total transactions received from each service
-- Matched transactions (received by both)
-- Latency statistics (average, median, percentiles)
-- Which service is faster and by how much
 
 ## How it works
 
@@ -44,7 +44,7 @@ The tool shows:
 4. Calculates latency differences for matched transactions
 5. Provides statistical analysis of the results
 
-## Links
+## 🔗 Links
 
 - **Shredlink**: https://www.shredlink.xyz/
 - **Discord**: https://discord.com/invite/sskBrcfX
