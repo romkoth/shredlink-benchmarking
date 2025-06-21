@@ -79,11 +79,13 @@ async fn main() -> Result<()> {
     println!("{}", green.apply_to("🏁 Starting benchmark..."));
     benchmark.run(benchmark_time).await?;
     
-    // Print results
+    // Print results with padding for screenshots
+    println!("\n\n");
     println!("{}", green.apply_to("📊 Benchmark Results:"));
     benchmark.print_report(&"cli.output");
     
     println!("{}", cyan.apply_to("✨ Benchmark completed successfully!"));
+    println!("\n\n");
     
     Ok(())
 }
