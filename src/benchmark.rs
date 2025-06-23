@@ -370,16 +370,10 @@ impl Benchmark {
         for (geyser_name, stats) in &report.geyser_results {
             println!();
             println!("{}", yellow.apply_to(format!("🔗 {}", geyser_name)));
-            println!("  🎯 Matched Transactions: {}", stats.matched_transactions);
-            println!("  📊 Geyser Only: {}", stats.geyser_only_count);
             
             if stats.matched_transactions > 0 {
-                let winner = if stats.average_latency_ms > 0.0 { "Shredlink" } else { "Geyser" };
-                let avg_diff = stats.average_latency_ms.abs();
-                
-                println!("  🏆 Winner: {} (avg {:.1}ms faster)", winner, avg_diff);
                 println!("  🎯 Shredlink wins: {:.1}% of transactions", stats.shredlink_wins_percentage);
-                println!("  📊 Average latency: {:.1}ms | Median: {:.1}ms", stats.average_latency_ms, stats.median_latency_ms);
+                println!("  📊 Average latency: {:.1}ms", stats.average_latency_ms);
             } else {
                 println!("  {}", red.apply_to("❌ No matched transactions"));
             }
