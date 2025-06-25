@@ -75,15 +75,17 @@ pub struct GeyserStats {
 
 pub struct Benchmark {
     geyser_urls: HashMap<String, String>, // geyser_name -> url
+    geyser_tokens: HashMap<String, String>, // geyser_name -> token
     shredlink_url: String,
     transactions: Arc<DashMap<String, TransactionTimestamp>>,
     start_time: Instant,
 }
 
 impl Benchmark {
-    pub fn new(geyser_urls: HashMap<String, String>, shredlink_url: String) -> Self {
+    pub fn new(geyser_urls: HashMap<String, String>, geyser_tokens: HashMap<String, String>, shredlink_url: String) -> Self {
         Self {
             geyser_urls,
+            geyser_tokens,
             shredlink_url,
             transactions: Arc::new(DashMap::new()),
             start_time: Instant::now(),
@@ -124,7 +126,8 @@ impl Benchmark {
         // Create futures for all Geyser clients
         for (geyser_name, geyser_url) in self.geyser_urls.clone() {
             if let Some(tx) = geyser_channels.get(&geyser_name).cloned() {
-                let mut client = GeyserStreamClient::new(geyser_url, None);
+                let token = self.geyser_tokens.get(&geyser_name).cloned();
+                let mut client = GeyserStreamClient::new(geyser_url, token);
                 let name = geyser_name.clone();
                 client_futures.push(Box::pin(async move {
                     if let Err(e) = client.start(tx).await {
@@ -222,17 +225,15 @@ impl Benchmark {
                 let timestamp = get_timestamp_ms();
                 let signature = transaction.signature;
                 
-                println!("🟦 {}: {}", geyser_name, signature);
-                
                 transactions
                     .entry(signature.clone())
                     .and_modify(|entry| {
                         if !entry.geyser_timestamps.contains_key(&geyser_name) {
                             entry.geyser_timestamps.insert(geyser_name.clone(), timestamp);
                             
-                            // Print latency if we have Shredlink data
+                            // Only print latency if we have Shredlink data for comparison
                             if let Some(diff) = entry.latency_diffs_ms().get(&geyser_name) {
-                                println!("⏱️  {}: {}ms ({})", geyser_name, diff, signature);
+                                println!("⏱️  {}: {}ms", geyser_name, diff);
                             }
                         }
                     })
@@ -254,13 +255,8 @@ impl Benchmark {
                 
                 let signature = match transaction.signatures.first() {
                     Some(sig_bytes) => bs58::encode(sig_bytes).into_string(),
-                    None => {
-                        println!("⚠️  Empty signature from Shredlink");
-                        continue;
-                    }
+                    None => continue,
                 };
-                
-                println!("🟪 Shredlink: {}", signature);
                 
                 transactions
                     .entry(signature.clone())
@@ -268,9 +264,9 @@ impl Benchmark {
                         if entry.shredlink_timestamp.is_none() {
                             entry.shredlink_timestamp = Some(timestamp);
                             
-                            // Print latencies for all Geyser sources
+                            // Print latencies for all Geyser sources that we have
                             for (geyser_name, diff) in entry.latency_diffs_ms() {
-                                println!("⏱️  {}: {}ms ({})", geyser_name, diff, signature);
+                                println!("⏱️  {}: {}ms", geyser_name, diff);
                             }
                         }
                     })

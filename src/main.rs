@@ -36,26 +36,30 @@ async fn main() -> Result<()> {
     let green = Style::new().green();
     let red = Style::new().red();
     
-    println!("{}", cyan.apply_to("🚀 ShredLink - Multi-Geyser Solana Transaction Streaming Benchmark"));
-    println!("{}", cyan.apply_to("=".repeat(70)));
+    println!("{}", cyan.apply_to("🚀 ShredLink - Multi-Geyser Benchmark"));
+    println!("{}", cyan.apply_to("=".repeat(45)));
     
     // Get Geyser configuration from environment
-    // Support multiple Geyser sources via numbered environment variables
     let mut geyser_urls = HashMap::new();
+    let mut geyser_tokens = HashMap::new();
     
-    // Check for named Geyser sources (e.g., GEYSER_TRITON_URL, GEYSER_HELIUS_URL, etc.)
     for (key, value) in env::vars() {
         if key.starts_with("GEYSER_") && key.ends_with("_URL") && key != "GEYSER_HOST_URL" {
-            // Extract the name between GEYSER_ and _URL
             if let Some(name_part) = key.strip_prefix("GEYSER_").and_then(|s| s.strip_suffix("_URL")) {
                 let geyser_name = format!("Geyser-{}", name_part.to_lowercase());
-                geyser_urls.insert(geyser_name, value);
+                geyser_urls.insert(geyser_name.clone(), value);
+                
+                // Check for corresponding token
+                let token_key = format!("GEYSER_{}_TOKEN", name_part);
+                if let Ok(token) = env::var(&token_key) {
+                    geyser_tokens.insert(geyser_name, token);
+                }
             }
         }
     }
     
     if geyser_urls.is_empty() {
-        return Err(anyhow::anyhow!("{}", red.apply_to("❌ No Geyser URLs found. Set GEYSER_HOST_URL or GEYSER_<NAME>_URL environment variables")));
+        return Err(anyhow::anyhow!("{}", red.apply_to("❌ No Geyser URLs found. Set GEYSER_<NAME>_URL environment variables")));
     }
     
     let shredlink_host = env::var("SHREDLINK_HOST_URL").map_err(|_| {
@@ -66,26 +70,24 @@ async fn main() -> Result<()> {
     
     println!("{}", green.apply_to("📋 Configuration:"));
     for (name, url) in &geyser_urls {
-        println!("  🔗 {}: {}", name, url);
+        let auth_status = if geyser_tokens.contains_key(name) { "🔐" } else { "🔓" };
+        println!("  {} {}: {}", auth_status, name, url);
     }
-    println!("  🔗 Shredlink Host: {}", shredlink_host);
-    println!("  ⏱️  Duration: {} seconds", cli.duration);
-    println!("  📊 Total Geyser Sources: {}", geyser_urls.len());
+    println!("  🔗 Shredlink: {}", shredlink_host);
+    println!("  ⏱️  Duration: {}s | Sources: {}", cli.duration, geyser_urls.len());
     println!();
     
     // Create and run benchmark
-    let mut benchmark = Benchmark::new(geyser_urls, shredlink_host);
+    let mut benchmark = Benchmark::new(geyser_urls, geyser_tokens, shredlink_host);
     
     println!("{}", green.apply_to("🏁 Starting benchmark..."));
     benchmark.run(benchmark_time).await?;
     
-    // Print results with padding for screenshots
-    println!("\n\n");
-    println!("{}", green.apply_to("📊 Benchmark Results:"));
+    // Print results
+    println!();
     benchmark.print_report(&"cli.output");
     
-    println!("{}", cyan.apply_to("✨ Benchmark completed successfully!"));
-    println!("\n\n");
+    println!("{}", cyan.apply_to("✨ Benchmark completed!"));
     
     Ok(())
 }

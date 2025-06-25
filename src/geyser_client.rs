@@ -1,65 +1,58 @@
 use anyhow::Result;
+use futures::StreamExt;
 use std::collections::HashMap;
-use std::pin::Pin;
-use futures::Stream;
-use futures::stream::StreamExt;
-use tokio::sync::mpsc;
-use yellowstone_grpc_proto::prelude::*;
+use tokio::sync::mpsc::UnboundedSender;
+use yellowstone_grpc_client::{GeyserGrpcClient, Interceptor, ClientTlsConfig};
+use yellowstone_grpc_proto::prelude::{
+    subscribe_update::UpdateOneof, CommitmentLevel, SubscribeRequest,
+    SubscribeRequestFilterTransactions,
+};
 
 #[derive(Debug, Clone)]
 pub struct GeyserTransaction {
     pub signature: String,
+    pub slot: u64,
 }
 
 pub struct GeyserStreamClient {
-    pub url: String,
+    endpoint: String,
+    token: Option<String>,
 }
 
 impl GeyserStreamClient {
-    pub fn new(url: String, _token: Option<String>) -> Self {
-        Self { url }
+    pub fn new(endpoint: String, token: Option<String>) -> Self {
+        Self { endpoint, token }
     }
 
-    pub async fn start(&mut self, tx_sender: mpsc::UnboundedSender<GeyserTransaction>) -> Result<()> {
-        println!("🔄 Connecting to Geyser at: {}", self.url);
+    async fn create_client(&self) -> Result<GeyserGrpcClient<impl Interceptor>> {
+        let mut builder = GeyserGrpcClient::build_from_shared(self.endpoint.clone())?;
         
-        let mut grpc_client = geyser_client::GeyserClient::connect(self.url.clone()).await?;
-        
-        let request = self.create_request();
-        let stream = futures::stream::once(async { request });
-        let request: Pin<Box<dyn Stream<Item = SubscribeRequest> + Send + 'static>> = Box::pin(stream);
-        
-        let response = grpc_client.subscribe(request).await?;
-        let mut response_stream = response.into_inner();
-        
-        println!("✅ Geyser subscribed successfully");
-        
-        while let Some(update_result) = response_stream.next().await {
-            match update_result {
-                Ok(update) => {
-                    if let Some(update_oneof) = update.update_oneof {
-                        if let subscribe_update::UpdateOneof::Transaction(transaction_update) = update_oneof {
-                            if let Some(transaction) = transaction_update.transaction {
-                                let signature = bs58::encode(&transaction.signature).into_string();
-                                let _ = tx_sender.send(GeyserTransaction { signature });
-                            }
-                        }
-                    }
-                }
-                Err(e) => eprintln!("❌ Geyser stream error: {:?}", e),
-            }
+        // Configure TLS for HTTPS endpoints
+        if self.endpoint.starts_with("https://") {
+            builder = builder.tls_config(ClientTlsConfig::new().with_native_roots())?;
         }
         
-        eprintln!("🔌 Geyser stream ended");
-        Ok(())
+        // Configure message size limit
+        builder = builder.max_decoding_message_size(1024 * 1024 * 1024);
+        
+        // Add token authentication if provided
+        if let Some(token) = &self.token {
+            builder = builder.x_token(Some(token.clone()))?;
+        }
+
+        let client = builder.connect().await
+            .map_err(|e| anyhow::anyhow!("gRPC connection failed: {}", e))?;
+        
+        Ok(client)
     }
 
-
-
-    fn create_request(&self) -> SubscribeRequest {
+    pub async fn start(&mut self, tx: UnboundedSender<GeyserTransaction>) -> Result<()> {
+        let mut client = self.create_client().await?;
+        
+        // Create subscription request for all transactions
         let mut transactions = HashMap::new();
         transactions.insert(
-            "pumpfun".to_string(),
+            "transactions".to_string(),
             SubscribeRequestFilterTransactions {
                 vote: Some(false),
                 failed: Some(false),
@@ -70,18 +63,50 @@ impl GeyserStreamClient {
             }
         );
 
-        SubscribeRequest {
-            accounts: HashMap::new(),
+        let request = SubscribeRequest {
             slots: HashMap::new(),
+            accounts: HashMap::new(),
             transactions,
             transactions_status: HashMap::new(),
+            entry: HashMap::new(),
             blocks: HashMap::new(),
             blocks_meta: HashMap::new(),
-            entry: HashMap::new(),
             commitment: Some(CommitmentLevel::Processed as i32),
             accounts_data_slice: vec![],
             ping: None,
             from_slot: None,
+        };
+
+        let (mut _subscribe_tx, mut stream) = client.subscribe_with_request(Some(request)).await
+            .map_err(|e| anyhow::anyhow!("Failed to start subscription: {}", e))?;
+
+        // Process the stream
+        while let Some(message) = stream.next().await {
+            match message {
+                Ok(msg) => {
+                    if let Some(UpdateOneof::Transaction(transaction_update)) = msg.update_oneof {
+                        if let Some(transaction) = transaction_update.transaction {
+                            let signature = bs58::encode(&transaction.signature).into_string();
+                            
+                            let geyser_transaction = GeyserTransaction {
+                                signature,
+                                slot: transaction_update.slot,
+                            };
+
+                            if let Err(e) = tx.send(geyser_transaction) {
+                                eprintln!("❌ Failed to send Geyser transaction: {}", e);
+                                break;
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    eprintln!("❌ Geyser stream error: {}", e);
+                    break;
+                }
+            }
         }
+
+        Ok(())
     }
 }
